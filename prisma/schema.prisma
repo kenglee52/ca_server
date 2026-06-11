@@ -1,0 +1,463 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums (เหมือนเดิม)
+enum Role {
+  CREDIT_OFFICER
+  VERIFIER
+  DCO_APPROVER
+  CEO_APPROVER
+  ADMIN
+}
+
+enum LoanType {
+  PERSONAL_SALARY_GUARANTEE
+  PERSONAL_WITH_COLLATERAL
+  BUSINESS
+}
+
+
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+}
+
+enum CreditGrade {
+  A
+  B
+  C
+  D
+}
+
+enum CustomerType {
+  NEW
+  EXISTING
+}
+
+enum IncomeEvidenceType {
+  BANK_STATEMENT
+  PAY_SLIP
+  OTHER
+}
+
+// 1. User
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  fullName     String?
+  signatureUrl String?
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  email        String?  @unique
+  applications        LoanApplication[]
+  assessments         Assessment[]      @relation("AssessedBy")
+  approvals           Assessment[]      @relation("ApprovedBy")
+  auditLogs           AuditLog[]        @relation("UserAuditLogs") // ชื่อตรงกัน
+  verifiedAssessments Assessment[]      @relation("Verifier")
+  dcoAssessments      Assessment[]      @relation("DCOApprover")
+  ceoAssessments      Assessment[]      @relation("CEOApprover")
+  approvalHistories   ApprovalHistory[] @relation("ApprovalHistoryApprover")
+
+  @@map("users")
+}
+
+enum Title {
+  THAO // ທ້າວ
+  NANG // ນາງ
+}
+
+model Province {
+  id   Int     @id @default(autoincrement())
+  name String  @unique
+  code String? @unique
+
+  districts District[]
+
+  // ✅ opposite ของ Borrower.province
+  borrowers Borrower[] @relation("BorrowerProvince")
+
+  // ✅ opposite ของ Borrower.businessProvince
+  businessBorrowers Borrower[] @relation("BusinessProvince")
+
+  createdAt DateTime @default(now())
+
+  @@map("provinces")
+}
+
+model District {
+  id         Int     @id @default(autoincrement())
+  provinceId Int
+  name       String
+  code       String?
+
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+
+  // ✅ opposite ของ Borrower.district
+  borrowers Borrower[] @relation("BorrowerDistrict")
+
+  // ✅ opposite ของ Borrower.businessDistrict
+  businessBorrowers Borrower[] @relation("BusinessDistrict")
+
+  createdAt DateTime @default(now())
+
+  @@unique([provinceId, name])
+  @@index([provinceId])
+  @@map("districts")
+}
+
+model Borrower {
+  id Int @id @default(autoincrement())
+
+  // ชื่อ-นามสกุล (รองรับทั้งลาวและอังกฤษ)
+  laoFirstName String // ຊື່ (ພາສາລາວ)
+  laoLastName  String // ນາມສະກຸນ (ພາສາລາວ)
+  firstName    String // First name (English)
+  lastName     String // Last name (English)
+
+  title            Title
+  age              Int
+  maritalStatus    MaritalStatus?
+  nationality      String         @default("Lao")
+  education        String?
+  occupation       String?
+  employerName     String? // ຊື່ບໍລິສັດ / ເຈົ້າຂອງ
+  position         String?
+  workingStartDate DateTime? // ວັນທີເລີ່ມເຮັດວຽກ
+
+  // ข้อมูลส่วนตัวเพิ่มเติม
+  phone              String?
+  dateOfBirth        DateTime? // ວັນເດືອນປີເກີດ
+  idCardExpiryDate   DateTime? // ມື້ໝົດອາຍຸເອກະສານ 
+  village            String? // ບ້ານ 
+  provinceId         Int?
+  districtId         Int?
+  province           Province? @relation("BorrowerProvince", fields: [provinceId], references: [id])
+  district           District? @relation("BorrowerDistrict", fields: [districtId], references: [id])
+  currentAddressLink String? // Link Google Maps ที่อยู่ปัจจุบัน
+
+  // ข้อมูลการเงิน (เดิม)
+  certificateType      String?
+  certificateNo        String?
+  monthlySalary        Decimal @default(0) @db.Decimal(15, 2)
+  householdExpense     Decimal @default(0) @db.Decimal(15, 2)
+  netIncome            Decimal @default(0) @db.Decimal(15, 2)
+  relationshipWithFina String? @default("No relationship")
+
+  // ข้อมูลบริษัท/ที่ทำงาน
+  companyProvinceId  Int? // ແຂວງ ຂອງບໍລິສັດທີ່ເຮັດວຽກ
+  companyDistrictId  Int? // ເມືອງ ຂອງບໍລິສັດທີ່ເຮັດວຽກ
+  companyVillage     String? // ບ້ານ ຂອງບໍລິສັດທີ່ເຮັດວຽກ
+  companyAddressLink String? // Link Google Maps ที่อยู่บริษัท
+  companyPhone       String? // ເບີໂທບໍລິສັດ
+
+  // ข้อมูลธุรกิจ
+  businessRegistrationNumber String? // ເລກທະບຽນວິສາຫະກິດ
+  businessRegisterName       String? // ຊື່ຕາມທະບຽນຂອງທຸລະກິດ
+  businessType               String? // ປະເພດທຸລະກິດ (เช่น ຮ້ານຂາຍເຄື່ອງ, ບໍລິການ)
+  businessVillage            String?
+  businessProvinceId         Int?
+  businessDistrictId         Int?
+  businessProvince           Province?  @relation("BusinessProvince", fields: [businessProvinceId], references: [id])
+  businessDistrict           District?  @relation("BusinessDistrict", fields: [businessDistrictId], references: [id])
+  businessAddressLink        String? // Link Google Maps ที่อยู่ธุรกิจ
+  businessPhone              String? // ເບີໂທທຸລະກິດ
+  employeeCount              Int? // ຈຳນວນພະນັກງານ
+  sectorId                   Int?
+  coBorrowerId               Int?
+  coBorrower                 Borrower?  @relation("CoBorrower", fields: [coBorrowerId], references: [id])
+  coBorrowers                Borrower[] @relation("CoBorrower")
+
+  applications    LoanApplication[]
+  incomes         BorrowerIncome[]
+  externalLoans   ExternalLoan[]
+  businessIncomes BusinessIncome[]  @relation("BorrowerBusinessIncomes")
+
+  sector    Sector?  @relation(fields: [sectorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([phone])
+  @@map("borrowers")
+}
+
+// 3. LoanApplication
+model LoanApplication {
+  id                     Int                @id @default(autoincrement())
+  userId                 Int?
+  borrowerId             Int
+  loanType               LoanType           @default(PERSONAL_SALARY_GUARANTEE)
+  customerType           CustomerType       @default(NEW)
+  loanPurpose            String
+  loanAmountRequested    Decimal            @db.Decimal(15, 2)
+  termMonths             Int
+  interestRatePa         Decimal            @db.Decimal(5, 2)
+  repaymentMode          String             @default("Flat rate")
+  processingFeesPercent  Decimal            @default(1.00) @db.Decimal(5, 2)
+  processingFeeAmount    Decimal            @default(0) @db.Decimal(15, 2)
+  collateralFeesPercent  Decimal            @default(0) @db.Decimal(5, 2)
+  collateralFeeAmount    Decimal            @default(0) @db.Decimal(15, 2)
+  earlySettleFeesPercent Decimal            @default(0) @db.Decimal(5, 2)
+  otherFeesPercent       Decimal            @default(0) @db.Decimal(5, 2)
+  otherFeeAmount         Decimal            @default(0) @db.Decimal(15, 2)
+  creditHistoryGrade     CreditGrade        @default(A)
+  existingDebt           Decimal            @default(0) @db.Decimal(15, 2)
+  evidenceOfIncome       String?
+  evidenceOfIncomeType   IncomeEvidenceType @default(BANK_STATEMENT)
+  status                 LoanStatus         @default(PENDING_VERIFIER)
+  submittedAt            DateTime           @default(now())
+  
+  updatedAt              DateTime           @updatedAt
+  borrower               Borrower           @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
+  user                   User?              @relation(fields: [userId], references: [id])
+  assessment             Assessment?
+  documentLinks          String?
+
+  payments Payment[]
+
+  @@map("loan_applications")
+}
+enum LoanStatus {
+  PENDING
+  PENDING_VERIFIER
+  PENDING_DCO
+  PENDING_CEO
+  APPROVED
+  REJECTED
+  RETURNED
+  DISBURSED
+  CLOSED
+  OVERDUE
+}
+// 4. Assessment
+model Assessment {
+  id                         Int           @id @default(autoincrement())
+  applicationId              Int           @unique
+  creditScore                Int?
+  dtiRatio                   Decimal       @db.Decimal(5, 2)
+  dtiThreshold               Decimal       @default(60.00) @db.Decimal(5, 2)
+  ltvRatio                   Decimal?      @db.Decimal(5, 2)
+  ltvThreshold               Decimal       @default(0.00) @db.Decimal(5, 2)
+  installmentAmount          Decimal       @db.Decimal(15, 2)
+  currInstallToFina          Decimal       @default(0) @db.Decimal(15, 2)
+  exisInstallToFina          Decimal       @default(0) @db.Decimal(15, 2)
+  payInstallToOther          Decimal       @default(0) @db.Decimal(15, 2)
+  totalInstallment           Decimal       @db.Decimal(15, 2)
+  totalNetIncome             Decimal       @db.Decimal(15, 2)
+  endingNetIncome            Decimal       @db.Decimal(15, 2)
+  totalInterest              Decimal       @db.Decimal(15, 2)
+  totalPrincipalPlusInterest Decimal       @db.Decimal(15, 2)
+  maxApprovedAmount          Decimal?      @db.Decimal(15, 2)
+  finalApprovalStatus        LoanStatus    @default(PENDING)
+  currentApprovalStep        ApprovalStep? @default(PENDING_VERIFIER)
+  assessedAt                 DateTime      @default(now())
+  preparerComments           String?
+
+  verifierId       Int?
+  verifierComments String?
+
+  dcoId       Int?
+  dcoComments String?
+
+  ceoId       Int?
+  ceoComments String?
+
+  assessedById Int?
+  approvedById Int?
+
+  operExpSalesRatio Decimal? @db.Decimal(5, 2)
+  cogsSalesRatio    Decimal? @db.Decimal(5, 2)
+  gpSalesRatio      Decimal? @db.Decimal(5, 2)
+  npSalesRatio      Decimal? @db.Decimal(5, 2)
+
+  // งวดหนี้เก่า (จาก External Loan ที่ active)
+  existingMonthlyInstallment Decimal? @db.Decimal(15, 2) // exisInstallToFina + payInstallToOther
+
+  // งวดรวมทั้งหมด (งวดใหม่ + หนี้เก่า)
+  totalMonthlyInstallment Decimal? @db.Decimal(15, 2) // currInstallToFina + exis + pay
+
+  // ค่าธรรมเนียมเงินกู้ (ปกติ 1% ของ loanAmountRequested)
+  processingFeeAmount    Decimal? @db.Decimal(15, 2) // loanAmountRequested * processingFeesPercent / 100
+  sectorRiskLevel        String?
+  sectorSmfV3Used        Decimal? 
+  riskAdjustmentFactor   Decimal? // เช่น 0.85, 1.20
+  sectorNameAtAssessment String?
+  subSectorAtAssessment  String?
+  bolCodeAtAssessment    String?
+  smfV3AtAssessment      Decimal?
+  monthlyPrincipal       Decimal? @db.Decimal(15, 2) // ต้นเงินต่อเดือน (principal / termMonths)
+  monthlyInterest        Decimal? @db.Decimal(15, 2) // ดอกเบี้ยต่อเดือน ((principal * rate) / 12)
+
+  verifier        User?             @relation("Verifier", fields: [verifierId], references: [id])
+  dco             User?             @relation("DCOApprover", fields: [dcoId], references: [id])
+  ceo             User?             @relation("CEOApprover", fields: [ceoId], references: [id])
+  application     LoanApplication   @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  assessedBy      User?             @relation("AssessedBy", fields: [assessedById], references: [id])
+  approvedBy      User?             @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  approvalHistory ApprovalHistory[] @relation("AssessmentApprovalHistory")
+
+  @@map("assessments")
+}
+
+enum ApprovalStep {
+  PENDING_VERIFIER
+  PENDING_DCO
+  PENDING_CEO
+  APPROVED
+  REJECTED
+}
+
+model ApprovalHistory {
+  id           Int      @id @default(autoincrement())
+  assessmentId Int
+  approverId   Int
+  level        String // "VERIFIER", "DCO", "CEO"
+  status       String // "APPROVED", "REJECTED"
+  comments     String?
+  approvedAt   DateTime @default(now())
+
+  assessment Assessment @relation("AssessmentApprovalHistory", fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  approver User @relation("ApprovalHistoryApprover", fields: [approverId], references: [id])
+
+  @@index([assessmentId])
+  @@index([approverId])
+}
+
+// 5. Payment OPPTIONAL
+model Payment {
+  id            Int      @id @default(autoincrement())
+  applicationId Int
+  paymentDate   DateTime
+  amountPaid    Decimal  @db.Decimal(15, 2)
+  principalPaid Decimal  @db.Decimal(15, 2)
+  interestPaid  Decimal  @db.Decimal(15, 2)
+  isOnTime      Boolean  @default(true)
+  receiptNo     String?
+
+  application LoanApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("payments")
+}
+
+// 6. BorrowerIncome
+model BorrowerIncome {
+  id          Int     @id @default(autoincrement())
+  borrowerId  Int
+  monthYear   String
+  grossIncome Decimal @db.Decimal(15, 2)
+  netIncome   Decimal @db.Decimal(15, 2)
+  source      String?
+
+  borrower Borrower @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("borrower_incomes")
+}
+
+// 8. BusinessIncome (ผูกตรง borrowerId)
+model BusinessIncome {
+  id          Int     @id @default(autoincrement())
+  borrowerId  Int
+  monthYear   String
+  saleRevenue Decimal @db.Decimal(15, 2)
+  costOfSale  Decimal @db.Decimal(15, 2)
+  grossProfit Decimal @db.Decimal(15, 2)
+  operExpense Decimal @db.Decimal(15, 2)
+  netProfit   Decimal @db.Decimal(15, 2)
+  source      String?
+
+  borrower Borrower @relation("BorrowerBusinessIncomes", fields: [borrowerId], references: [id], onDelete: Cascade) // back-relation ตรงกัน
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("business_incomes")
+}
+
+// 7. ExternalLoan
+model ExternalLoan {
+  id                 Int       @id @default(autoincrement())
+  borrowerId         Int
+  source             String? // "FINA_INTERNAL" / "EXTERNAL_BANK" / "CIB"
+  product            String
+  institution        String?
+  loanAmount         Decimal   @db.Decimal(15, 2)
+  outstanding        Decimal   @db.Decimal(15, 2)
+  interestRatePa     Decimal?  @db.Decimal(5, 2)
+  termMonths         Int?
+  startDate          DateTime?
+  endDate            DateTime?
+  monthlyInstallment Decimal?  @db.Decimal(15, 2)
+  overdueDays        Int?      @default(0)
+  creditClass        String?
+  checkDate          DateTime  @default(now())
+  status             String?
+  isDeleted          Boolean   @default(false)
+  deletedAt          DateTime?
+  borrower           Borrower  @relation(fields: [borrowerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("external_loans")
+}
+
+
+// 11. Sector
+model Sector {
+  id          Int       @id @default(autoincrement())
+  number      Int
+  sector      String
+  subSector   String?
+  smfV1       Decimal?  @db.Decimal(5, 1)
+  smfV2       Decimal?  @db.Decimal(5, 1)
+  smfV3       Decimal?  @db.Decimal(5, 1)
+  bolEconomic String?
+  bolCode     String
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+
+  createdAt DateTime   @default(now())
+  borrowers Borrower[]
+
+  @@map("sectors")
+}
+
+// 12. AuditLog
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  action      String
+  entityType  String
+  entityId    Int?
+  changes     Json?
+  oldValue    Json?
+  newValue    Json?
+  ipAddress   String?
+  userAgent   String?
+  performedAt DateTime @default(now())
+  description String?
+
+  user User? @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull) // ชื่อตรงกัน
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([performedAt])
+  @@map("audit_logs")
+}
