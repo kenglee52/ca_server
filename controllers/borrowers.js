@@ -399,3 +399,87 @@ exports.getBorrowers = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * DELETE Borrower
+ * ເງື່ອນໄຂ: ຈະລົບໄດ້ກໍຕໍ່ເມື່ອບໍ່ມີ LoanApplication ຫຼື ມີແຕ່ໃບສະໝັກທີ່ສະຖານະເປັນ REJECTED ເທົ່ານັ້ນ
+ */
+exports.deleteBorrower = async (req, res) => {
+  const userId = req.user.id;
+  const borrowerId = Number(req.params.id);
+
+  try {
+    // 1. ກວດສອບວ່າພົບຂໍ້ມູນຜູ້ກູ້ຫຼືບໍ່
+    const borrower = await prisma.borrower.findUnique({
+      where: { id: borrowerId },
+      include: {
+        applications: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!borrower) {
+      return res.status(404).json({
+        success: false,
+        message: "ບໍ່ພົບຂໍ້ມູນຜູ້ກູ້",
+      });
+    }
+
+    // 2. ກວດສອບເງື່ອນໄຂ LoanApplication
+    // ຄົ້ນຫາໃບສະໝັກທີ່ມີສະຖານະ "ບໍ່ແມ່ນ REJECTED"
+    const activeApplications = borrower.applications.filter(
+      (app) => app.status !== "REJECTED"
+    );
+
+    if (activeApplications.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "ບໍ່ສາມາດລົບໄດ້ ເນື່ອງຈາກຜູ້ກູ້ມີໃບສະໝັກເງິນກູ້ທີ່ຢູ່ໃນຂະບວນການ ຫຼື ຖືກອະນຸຍາດແລ້ວ (ສະຖານະບໍ່ແມ່ນ REJECTED)",
+      });
+    }
+
+    // 3. ລົບຂໍ້ມູນ (ເນື່ອງຈາກໃນ Schema ຕັ້ງ onDelete: Cascade ໄວ້ຢູ່ບາງຕາຕະລາງ ເຊັ່ນ LoanApplication)
+    // ແຕ່ເພື່ອຄວາມປອດໄພ ແລະ ບໍ່ໃຫ້ຕິດ Foreign Key Constraint ຂອງຕາຕະລາງອື່ນໆ ທີ່ບໍ່ມີ Cascade
+    // ເຮົາຈະໃຊ້ Prisma Transaction ໃນການລົບຂໍ້ມູນທີ່ກ່ຽວຂ້ອງອອກກ່ອນ
+    await prisma.$transaction([
+      // ລົບຂໍ້ມູນລາຍໄດ້ ແລະ ໝີ້ສິນສ່ວນຕົວຂອງຜູ້ກູ້ກ່ອນ
+      prisma.borrowerIncome.deleteMany({ where: { borrowerId } }),
+      prisma.businessIncome.deleteMany({ where: { borrowerId } }),
+      prisma.externalLoan.deleteMany({ where: { borrowerId } }),
+      
+      // ລົບຕົວຜູ້ກູ້ (ໃບສະໝັກ LoanApplication ຈະຖືກລົບອັດຕະໂນມັດເນື່ອງຈາກ onDelete: Cascade ໃນ Schema)
+      prisma.borrower.delete({ where: { id: borrowerId } }),
+    ]);
+
+    // 4. ບັນທຶກ Audit Log
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action: "DELETE",
+        entityType: "Borrower",
+        entityId: borrowerId,
+        oldValue: borrower,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+        description: `ລົບຜູ້ກູ້: ${borrower.laoFirstName} ${borrower.laoLastName} (${borrower.firstName} ${borrower.lastName})`,
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: "ລົບຂໍ້ມູນຜູ້ກູ້ສຳເລັດ",
+    });
+
+  } catch (err) {
+    console.error("DeleteBorrower Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "ເກີດຂໍ້ຜິດພາດໃນລະບົບ",
+    });
+  }
+};
