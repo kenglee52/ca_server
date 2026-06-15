@@ -16,10 +16,6 @@ const prisma = new PrismaClient();
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
-
-    // ==========================
-    // Validate Input
-    // ==========================
     if (!username || !password) {
       return res.status(400).json({
         success: false,
