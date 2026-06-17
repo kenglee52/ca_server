@@ -485,23 +485,11 @@ exports.updateLoanApplication=async (req,res) => {
       });
     }
 
-    // Allowed fields
-    // Allowed fields – ลบ "preparerComments" ออกไปเลย (ไม่ต้องอยู่ใน allow ของ LoanApplication)
     const allow=[
-      "loanPurpose",
-      "loanAmountRequested",
-      "termMonths",
-      "interestRatePa",
-      "repaymentMode",
-      "processingFeesPercent",
-      "collateralFeesPercent",
-      "otherFeesPercent",
-      "evidenceOfIncome",
-      "evidenceOfIncomeType",
-      "loanType",
-      "customerType",
-      "documentLinks",
-      // ไม่มี "preparerComments" ที่นี่!
+      "loanPurpose","loanAmountRequested","termMonths","interestRatePa",
+      "repaymentMode","processingFeesPercent","collateralFeesPercent",
+      "otherFeesPercent","evidenceOfIncome","evidenceOfIncomeType",
+      "loanType","customerType","documentLinks",
     ];
 
     const patch={};
@@ -509,7 +497,6 @@ exports.updateLoanApplication=async (req,res) => {
       if(req.body[k]!==undefined) patch[k]=req.body[k];
     }
 
-    // แยก preparerComments ออกมาต่างหาก
     const newPreparerComments=req.body.preparerComments!==undefined
       ? req.body.preparerComments?.trim()||null
       :undefined;
@@ -518,7 +505,7 @@ exports.updateLoanApplication=async (req,res) => {
       const newApp=await tx.loanApplication.update({
         where: {id},
         data: {
-          ...patch,  // ไม่มี preparerComments แล้ว → ปลอดภัย
+          ...patch,
           termMonths: patch.termMonths!=null? Number(patch.termMonths):undefined,
           loanAmountRequested: patch.loanAmountRequested!=null? Number(patch.loanAmountRequested):undefined,
           interestRatePa: patch.interestRatePa!=null? Number(patch.interestRatePa):undefined,
@@ -526,33 +513,25 @@ exports.updateLoanApplication=async (req,res) => {
           collateralFeesPercent: patch.collateralFeesPercent!=null? Number(patch.collateralFeesPercent):undefined,
           otherFeesPercent: patch.otherFeesPercent!=null? Number(patch.otherFeesPercent):undefined,
           documentLinks: patch.documentLinks?.trim()||null,
+
+          // ✅ ຖ້າ status ເດີມເປັນ RETURNED ໃຫ້ປ່ຽນກັບໄປ PENDING_VERIFIER
+          ...(old.status==="RETURNED"&&{status: "PENDING_VERIFIER"}),
         },
       });
-
       if(newPreparerComments!==undefined&&old.assessment) {
         await tx.assessment.update({
           where: {applicationId: id},
-          data: {
-            preparerComments: newPreparerComments,
-          },
+          data: {preparerComments: newPreparerComments},
         });
       }
-      // หลัง update newApp
-      if(patch.preparerComments!==undefined&&old.assessment) {
-        await tx.assessment.update({
-          where: {applicationId: id},  // ใช้ applicationId ปลอดภัยกว่า (id คือ applicationId)
-          data: {
-            preparerComments: patch.preparerComments?.trim()||null,
-          },
-        });
-      }
-      // Recompute assessment (ไม่มี sector แล้ว)
+
+      // Recompute assessment
       const loanAmount=Number(newApp.loanAmountRequested);
       const term=Number(newApp.termMonths);
       const rate=Number(newApp.interestRatePa);
 
       if(isNaN(loanAmount)||isNaN(term)||isNaN(rate)||term<=0||loanAmount<=0||rate<0) {
-        throw new Error("ข้อมูลจำนวนเงินกู้ ระยะเวลา หรืออัตราดอกเบี้ยไม่ถูกต้อง");
+        throw new Error("ຂໍ້ມູນຈຳນວນເງິນກູ້ ໄລຍະເວລາ ຫຼືອັດຕາດອກເບ້ຍບໍ່ຖືກຕ້ອງ");
       }
 
       if((newApp.repaymentMode||"Flat rate")!=="Flat rate") {
@@ -562,12 +541,8 @@ exports.updateLoanApplication=async (req,res) => {
       const totalInterest=loanAmount*(rate/100);
       const calcResult=calcFlatInstallmentFixed(loanAmount,totalInterest,term);
 
-      const installment=calcResult.installment;
-      const monthlyPrincipal=calcResult.monthlyPrincipal;
-      const monthlyInterest=calcResult.monthlyInterest;
-      const totalPPI=calcResult.totalPPI;
+      const {installment,monthlyPrincipal,monthlyInterest,totalPPI}=calcResult;
 
-      // Income
       const salaryRows=await tx.borrowerIncome.findMany({
         where: {borrowerId: newApp.borrowerId},
         orderBy: {monthYear: "desc"},
@@ -580,12 +555,14 @@ exports.updateLoanApplication=async (req,res) => {
         take: 6,
       });
 
-      const totalNetIncome=avgLastN(salaryRows.map(r => r.netIncome),6)+avgLastN(bizRows.map(r => r.netProfit),6);
+      const totalNetIncome=
+        avgLastN(salaryRows.map((r) => r.netIncome),6)+
+        avgLastN(bizRows.map((r) => r.netProfit),6);
+
       if(totalNetIncome<=0) {
         throw new Error("No sufficient income data found for recomputation");
       }
 
-      // Existing debts
       const loans=await tx.externalLoan.findMany({
         where: {borrowerId: newApp.borrowerId,isDeleted: false},
       });
@@ -608,20 +585,18 @@ exports.updateLoanApplication=async (req,res) => {
       const endingNetIncome=totalNetIncome-totalInstallment;
 
       const dtiThreshold=60;
-      const allowedInstallment=(totalNetIncome*(dtiThreshold/100))-(exisInstallToFina+payInstallToOther);
+      const allowedInstallment=
+        totalNetIncome*(dtiThreshold/100)-(exisInstallToFina+payInstallToOther);
 
       let maxApprovedAmount=calcMaxApprovedFlat(allowedInstallment,rate,term);
-
-      // Optional: จำกัดวงเงินไม่ให้สูงเกิน requested มากเกินไป (ยังเก็บไว้เผื่อ)
       maxApprovedAmount=Math.min(maxApprovedAmount,loanAmount*1.5);
 
-      // ค่าธรรมเนียม
       const processingFeePercent=toNumber(newApp.processingFeesPercent,1);
       const processingFeeAmount=loanAmount*(processingFeePercent/100);
 
-      // Update assessment – ลบ field sector ทั้งหมดออก
       const oldAssess=await tx.assessment.findUnique({where: {applicationId: id}});
 
+      // ✅ ຖ້າ RETURNED ໃຫ້ reset step ກັບໄປ PENDING_VERIFIER ໃນ Assessment ດ້ວຍ
       const newAssess=await tx.assessment.update({
         where: {applicationId: id},
         data: {
@@ -636,25 +611,40 @@ exports.updateLoanApplication=async (req,res) => {
           totalInterest: Number(totalInterest),
           totalPrincipalPlusInterest: Number(totalPPI),
           maxApprovedAmount: Number(maxApprovedAmount),
-
           monthlyPrincipal: Number(monthlyPrincipal),
           monthlyInterest: Number(monthlyInterest),
           existingMonthlyInstallment: Number(exisInstallToFina+payInstallToOther),
           totalMonthlyInstallment: Number(totalInstallment),
           processingFeeAmount: Number(processingFeeAmount),
 
-          // preparerComments (ถ้ามีการส่งมาใหม่)
-          ...(patch.preparerComments!==undefined&&{
-            preparerComments: patch.preparerComments?.trim()||null,
+          // ✅ reset step ກັບໄປ PENDING_VERIFIER ເວລາ CO ແກ້ໄຂຫຼັງ RETURNED
+          ...(old.status==="RETURNED"&&{
+            currentApprovalStep: "PENDING_VERIFIER",
+            verifierComments: null,
+            verifier: {disconnect: true},
+          }),
+
+          ...(newPreparerComments!==undefined&&{
+            preparerComments: newPreparerComments,
           }),
         },
       });
 
-      // Audit logs
+      // ✅ ApprovalHistory: log ວ່າ CO ແກ້ໄຂສຳເລັດ
+      if(old.status==="RETURNED") {
+        await tx.approvalHistory.create({
+          data: {
+            assessmentId: old.assessment?.id,
+            approverId: userId,
+            level: "CO_RESUBMIT",
+            status: "RESUBMITTED",
+            comments: newPreparerComments||"CO ແກ້ໄຂ ແລ້ວສົ່ງກັບ Verifier",
+          },
+        });
+      }
+
       await writeAuditLog({
-        tx,
-        req,
-        userId,
+        tx,req,userId,
         action: "UPDATE",
         entityType: "LoanApplication",
         entityId: id,
@@ -664,9 +654,7 @@ exports.updateLoanApplication=async (req,res) => {
       });
 
       await writeAuditLog({
-        tx,
-        req,
-        userId,
+        tx,req,userId,
         action: "UPDATE",
         entityType: "Assessment",
         entityId: id,
@@ -680,14 +668,10 @@ exports.updateLoanApplication=async (req,res) => {
 
     const full=await prisma.loanApplication.findUnique({
       where: {id: updated.id},
-      include: {
-        borrower: true,  // ไม่ include sector แล้ว
-        assessment: true,
-      },
+      include: {borrower: true,assessment: true},
     });
 
     res.status(200).json({success: true,data: full});
-    await notifyCeoOnDcoApprove({applicationId: id});
   } catch(err) {
     console.error("UpdateLoanApplication Error:",err);
     return res.status(500).json({success: false,message: err.message||"ເກີດຂໍ້ຜິດພາດໃນລະບົບ"});
@@ -1112,7 +1096,7 @@ exports.rejectByCeo=async (req,res) => {
     //   applicationId: id,
     //   decision: "REJECTED"
     // });
-     res.json({
+    res.json({
       success: true,
       message: "CEO Reject ສຳເລັດ (Final Rejected)",
       data: {

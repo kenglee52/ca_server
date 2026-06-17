@@ -64,7 +64,7 @@ router.post(
 router.get('/loan-applications/:id/full-report', authCheck, reportViewCheck, getFullLoanReport);
 
 router.get("/loan-applications/by-status", authCheck, borrowerViewCheck, getLoanApplicationsByStatus);
-//router.put("/loan-applications/:id/returned", authCheck, creditOfficerCheck, returnedAndUpdate);
+// router.put("/loan-applications/:id/returned", authCheck, creditOfficerCheck, returnedAndUpdate);
 router.post("/loan-applications/:id/resubmit-to-verifier", authCheck, creditOfficerCheck, resubmitToVerifier);
 
 router.get("/loan-applications/report", authCheck, reportViewCheck, getLoanReport);
