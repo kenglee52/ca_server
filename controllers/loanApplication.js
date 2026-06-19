@@ -1919,8 +1919,15 @@ exports.getLoanReport=async (req,res) => {
 
     const stats={
       total,
-      pending: await prisma.loanApplication.count({where: {...where,status: "PENDING"}}),
-      pendingVerifier: await prisma.loanApplication.count({where: {...where,status: "PENDING_VERIFIER"}}),
+      pending: await prisma.loanApplication.count({
+        where: {
+          ...where,
+          status: {
+            in: ["PENDING_VERIFIER","PENDING_DCO","PENDING_CEO"]
+          }
+        }
+      }),
+      reject: await prisma.loanApplication.count({where: {...where,status: "REJECTED"}}),
       returned: await prisma.loanApplication.count({where: {...where,status: "RETURNED"}}),
       approved: await prisma.loanApplication.count({where: {...where,status: "APPROVED"}}),
     };
