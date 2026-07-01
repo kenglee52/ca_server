@@ -18,7 +18,7 @@ async function notifyCreditOfficerOnCeoDecision({ applicationId, decision }) {
   const to = app?.user?.email;
   if (!to) return;
 
-  const link = `${process.env.APP_BASE_URL || ""}/credit/applications/${app.id}`;
+  const link = `${process.env.APP_BASE_URL || "http://localhost:5173"}/credit/applications/${app.id}`;
   const subject = `CEO decision on application (#${app.id}): ${decision}`;
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6;">

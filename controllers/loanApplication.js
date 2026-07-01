@@ -744,6 +744,7 @@ exports.getLoanApplications=async (req,res) => {
     const total=await prisma.loanApplication.count({where});
 
     return res.json({
+      count: data.length,
       success: true,
       data,
       pagination: {
@@ -2078,7 +2079,12 @@ exports.getMyActivityHistory=async (req,res) => {
       myLastAction: app.assessment?.approvalHistory?.[0]||null,
       statusLabel: getStatusLabel(app.status),
     }));
-
+    const rejected = await prisma.loanApplication.count({where: {status: "REJECTED"}})
+    const pending = await prisma.loanApplication.count({where: {
+      status: {in: ["PENDING_VERIFIER", "PENDING_DCO","PENDING_CEO"]}
+    }});
+    const approved = await prisma.loanApplication.count({where: {status: "APPROVED"}})
+    const returned = await prisma.loanApplication.count({where: {status: "RETURNED"}})
     return res.json({
       success: true,
       data: formatted,
@@ -2087,6 +2093,10 @@ exports.getMyActivityHistory=async (req,res) => {
         page: pageNum,
         limit: limitNum,
         totalPages: Math.ceil(total/limitNum),
+        rejected: rejected,
+        pending: pending,
+        approved: approved,
+        returned: returned
       },
     });
   } catch(err) {
@@ -2110,82 +2120,71 @@ const getStatusLabel=(status) => {
 
 
 
-exports.getFullLoanReport=async (req,res) => {
+exports.getFullLoanReport = async (req, res) => {
   try {
-    const id=Number(req.params.id);
-    if(Number.isNaN(id)) {
-      return res.status(400).json({success: false,message: "ID ไม่ถูกต้อง"});
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ success: false, message: "ID ไม่ถูกต้อง" });
     }
 
-    const loan=await prisma.loanApplication.findUnique({
-      where: {id},
+    const loan = await prisma.loanApplication.findUnique({
+      where: { id },
       include: {
         borrower: {
           include: {
             sector: true,
+            district: {
+              include: { province: true },
+            },
+            province: true,              // ✅ ເພີ່ມ ແຂວງທີ່ຢູ່ສ່ວນຕົວ (ກັນເຜື່ອ district null)
+            companyDistrict: true,
+            companyProvince: true,
+            businessProvince: true,      // ✅ ເພີ່ມ ໃນກໍລະນີເປັນເງິນກູ້ທຸລະກິດ
+            businessDistrict: true,
+            businessIncomes: {           // ✅ ຈຸດສຳຄັນ! ຂໍ້ມູນທຸລະກິດ ຊຸດ 1/2
+              orderBy: { monthYear: 'asc' },
+            },
+            incomes: true,               // (ຖ້າຢາກໃຊ້ BorrowerIncome ໃນອະນາຄົດ)
+            externalLoans: {
+              where: { isDeleted: false },
+            },
           },
         },
-
 
         assessment: {
           include: {
             verifier: {
-              select: {
-                id: true,
-                username: true,
-                fullName: true,
-                signatureUrl: true,
-              },
+              select: { id: true, username: true, fullName: true, signatureUrl: true },
             },
             dco: {
-              select: {
-                id: true,
-                username: true,
-                fullName: true,
-                signatureUrl: true,
-              },
+              select: { id: true, username: true, fullName: true, signatureUrl: true },
             },
             ceo: {
-              select: {
-                id: true,
-                username: true,
-                fullName: true,
-                signatureUrl: true,
-              },
+              select: { id: true, username: true, fullName: true, signatureUrl: true },
             },
             assessedBy: {
-              select: {
-                id: true,
-                username: true,
-                fullName: true,
-                signatureUrl: true,
-              },
+              select: { id: true, username: true, fullName: true, signatureUrl: true },
             },
             approvalHistory: {
-              orderBy: {approvedAt: 'asc'},
+              orderBy: { approvedAt: 'asc' },
               include: {
                 approver: {
-                  select: {
-                    id: true,
-                    username: true,
-                    fullName: true,
-                    signatureUrl: true,
-                  },
+                  select: { id: true, username: true, fullName: true, signatureUrl: true },
                 },
               },
             },
           },
         },
 
-
+        payments: true, // ✅ ຖ້າຢາກໃຫ້ totalPayments ໃນ summary ຄິດຖືກ
       },
     });
 
-    if(!loan) {
-      return res.status(404).json({success: false,message: "ไม่พบ Loan Application"});
+    if (!loan) {
+      return res.status(404).json({ success: false, message: "ไม่พบ Loan Application" });
     }
 
-    if(loan.status!=="APPROVED"||loan.assessment?.currentApprovalStep!=="APPROVED") {
+    if (loan.status !== "APPROVED" || loan.assessment?.currentApprovalStep !== "APPROVED") {
       return res.status(400).json({
         success: false,
         message: "Loan Application นี้ยังไม่ผ่านการอนุมัติโดย CEO หรือยังไม่สิ้นสุดกระบวนการ",
@@ -2195,17 +2194,16 @@ exports.getFullLoanReport=async (req,res) => {
     return res.json({
       success: true,
       data: loan,
-      // ถ้าต้องการส่งข้อมูลสรุปเพิ่มเติม
       summary: {
         loanId: loan.id,
-        borrowerName: `${loan.borrower?.laoFirstName||''} ${loan.borrower?.laoLastName||''}`,
+        borrowerName: `${loan.borrower?.laoFirstName || ''} ${loan.borrower?.laoLastName || ''}`,
         status: loan.status,
-        approvedByCEOAt: loan.assessment?.ceo?.approvedAt||null,
-        totalPayments: loan.payments?.length||0,
+        approvedByCEOAt: loan.assessment?.approvalHistory?.find(h => h.level === 'CEO')?.approvedAt || null, // ✅ ແກ້ ceo.approvedAt ທີ່ບໍ່ມີຢູ່ໃນ User model
+        totalPayments: loan.payments?.length || 0,
       },
     });
-  } catch(err) {
-    console.error("GetFullLoanReport Error:",err);
+  } catch (err) {
+    console.error("GetFullLoanReport Error:", err);
     return res.status(500).json({
       success: false,
       message: "เกิดข้อผิดพลาดในระบบ",

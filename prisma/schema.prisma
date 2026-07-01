@@ -89,6 +89,7 @@ model Province {
 
   // ✅ opposite ของ Borrower.businessProvince
   businessBorrowers Borrower[] @relation("BusinessProvince")
+  companyBorrowers Borrower[] @relation("CompanyProvince")
 
   createdAt DateTime @default(now())
 
@@ -108,6 +109,7 @@ model District {
 
   // ✅ opposite ของ Borrower.businessDistrict
   businessBorrowers Borrower[] @relation("BusinessDistrict")
+  companyBorrowers Borrower[] @relation("CompanyDistrict")
 
   createdAt DateTime @default(now())
 
@@ -157,6 +159,8 @@ model Borrower {
   // ข้อมูลบริษัท/ที่ทำงาน
   companyProvinceId  Int? // ແຂວງ ຂອງບໍລິສັດທີ່ເຮັດວຽກ
   companyDistrictId  Int? // ເມືອງ ຂອງບໍລິສັດທີ່ເຮັດວຽກ
+  companyProvince   Province? @relation("CompanyProvince", fields: [companyProvinceId], references: [id])
+  companyDistrict   District? @relation("CompanyDistrict", fields: [companyDistrictId], references: [id])
   companyVillage     String? // ບ້ານ ຂອງບໍລິສັດທີ່ເຮັດວຽກ
   companyAddressLink String? // Link Google Maps ที่อยู่บริษัท
   companyPhone       String? // ເບີໂທບໍລິສັດ

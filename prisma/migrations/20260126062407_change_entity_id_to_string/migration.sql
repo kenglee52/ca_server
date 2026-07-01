@@ -1,3 +1,0 @@
--- AlterTable
-ALTER TABLE "audit_logs" ALTER COLUMN "entityId" DROP NOT NULL,
-ALTER COLUMN "entityId" SET DATA TYPE TEXT;

@@ -6,7 +6,7 @@ async function notifyVerifierOnSubmit({ applicationId }) {
     role: "VERIFIER",
     subject: `New application pending verification (#${applicationId})`,
     headline: "New Loan Application for Verification",
-    linkPath: "/verifier/applications/",
+    linkPath: `/verifier/inbox/${applicationId}`,
   });
 }
 

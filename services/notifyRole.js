@@ -30,7 +30,7 @@ async function notifyRole({ applicationId, role, subject, headline, linkPath }) 
   const borrowerName =
     `${app.borrower?.laoFirstName || ""} ${app.borrower?.laoLastName || ""}`.trim() || "-";
   const amount = Number(app.loanAmountRequested || 0).toLocaleString("lo-LA");
-  const link = `${process.env.APP_BASE_URL || ""}${linkPath}${app.id}`;
+  const link = `${process.env.APP_BASE_URL || "http://localhost:5173"}${linkPath}${app.id}`;
 
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6;">
